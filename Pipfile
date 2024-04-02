@@ -10,12 +10,14 @@ pyaudio = "*"
 speechrecognition = "*"
 gtts = "*"
 python-dotenv = "*"
-openai = "*"
 langchain = "*"
 langchain-openai = "*"
 langchain-community = "*"
+huggingface-hub = "*"
+duckduckgo-search = "*"
 pypdf = "*"
 faiss-cpu = "*"
+gradio-tools = "*"
 
 [dev-packages]
 
