@@ -1,4 +1,5 @@
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.pydantic_v1 import BaseModel, Field
 from langchain_openai import OpenAIEmbeddings
@@ -17,17 +18,25 @@ _ = load_dotenv(find_dotenv())
 search = DuckDuckGoSearchRun()
 text2video = TextToVideoTool() # ali-vilab/modelscope-damo-text-to-video-synthesis
 
-def get_retriever_tool(file_path, file_name, model):
-    loader = PyPDFLoader(file_path)
-    pages = loader.load_and_split()
+def get_retriever_tool(file_paths, file_names, type, model):
+    pages = []
+    if type == "pdf":
+        for file_path in file_paths:
+            loader = PyPDFLoader(file_path)
+            pages.extend(loader.load_and_split())
+    if type == "url":
+        for file_path in file_paths:
+            loader = WebBaseLoader(file_path)
+            docs = loader.load()
+            pages.extend(RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200).split_documents(docs))
     # embeddings = OllamaEmbeddings(model="mistral:7b") if model == "mistral" else OpenAIEmbeddings(model="gpt-3.5-turbo")
-    embeddings = HuggingFaceInferenceAPIEmbeddings(api_key = os.environ["HUGGINGFACEHUB_API_TOKEN"], model_name="sentence-transformers/all-MiniLM-l6-v2") if model == "mistral" else OpenAIEmbeddings(model="gpt-3.5-turbo")
+    embeddings = HuggingFaceInferenceAPIEmbeddings(api_key=os.environ["HUGGINGFACEHUB_API_TOKEN"], model_name="sentence-transformers/all-MiniLM-l6-v2") if model == "mistral" else OpenAIEmbeddings(model="gpt-3.5-turbo")
     vector = FAISS.from_documents(pages, embeddings)
     retriever = vector.as_retriever()
     retriever_tool = create_retriever_tool(
         retriever,
-        "pdf_document_search",
-        f"Search for information about uploaded PDF document {file_name}. For any questions about uploaded PDF document {file_name}, you must use this tool!",
+        f"{type}_documents_search",
+        f"Search for information about uploaded {type} documents: {', '.join(file_names)}",
     )
     return retriever_tool
 

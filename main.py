@@ -47,9 +47,7 @@ def text_to_speech(text):
 def get_key(key, default_value):
     if key not in st.session_state:
         st.session_state[key] = default_value
-        return default_value
-    else:
-        return st.session_state[key]
+    return st.session_state[key]
     
 def get_gpt_llm():
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
@@ -95,16 +93,27 @@ def update_llm_model():
     st.session_state["llm"] = get_mistral_llm() if model == "mistral" else get_gpt_llm()
     st.session_state["agent"] = get_agent()
 
-def update_retriever_tool():
+def update_retriever_tool(type):
+    tools = [search, generate_music, generate_image, generate_video]
     model = get_key("model", "mistral")
-    uploaded_file = st.session_state["uploaded_file"]
-    if uploaded_file:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            temp_file.write(uploaded_file.getvalue())
-            retriever_tool = get_retriever_tool(temp_file.name, uploaded_file.name, model)
-        st.session_state["tools"] = [search, generate_music, generate_image, generate_video, retriever_tool]
-    else:
-        st.session_state["tools"] = [search, generate_music, generate_image, generate_video]
+    if type == "pdf":
+        uploaded_files = st.session_state["uploaded_files"]
+        file_paths = []
+        file_names = []
+        for uploaded_file in uploaded_files:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                temp_file.write(uploaded_file.getvalue())
+                file_paths.append(temp_file.name)
+                file_names.append(uploaded_file.name)
+        st.session_state["pdf_tool"] = get_retriever_tool(file_paths, file_names, "pdf", model)
+    if "pdf_tool" in st.session_state:
+        tools += [st.session_state["pdf_tool"]]
+    if type == "url":
+        urls = st.session_state["urls"].strip().split("\n")
+        st.session_state["url_tool"] = get_retriever_tool(urls, urls, "url", model)
+    if "url_tool" in st.session_state:
+        tools += [st.session_state["url_tool"]]
+    st.session_state["tools"] = tools
     st.session_state["llm"] = get_mistral_llm() if model == "mistral" else get_gpt_llm()
     st.session_state["agent"] = get_agent()
 
@@ -163,7 +172,6 @@ def record_audio():
         in_recorder_factory=lambda: MediaRecorder(TMP_WAV),
         media_stream_constraints={"audio": True, "video": False},
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        async_processing=True,
     )
     if not st.session_state["webrtc_ctx"].state.playing:
         voice_flow()
@@ -188,7 +196,8 @@ def room_sidebar():
         if st.session_state["room_id"]:
             with st.expander("Settings"):
                 st.selectbox("Model", ["mistral", "gpt"], key="model", on_change=update_llm_model)
-                st.file_uploader("Retrieve PDF information", type=["pdf"], key="uploaded_file", on_change=update_retriever_tool)
+                st.text_area("URLs retriever", key="urls", on_change=update_retriever_tool, kwargs={"type": "url"})
+                st.file_uploader("PDFs Retriever", key="uploaded_files", on_change=update_retriever_tool, kwargs={"type": "pdf"}, type=["pdf"], accept_multiple_files=True)
                 record_audio()
                 st.button("Delete chat", on_click=delete_chat_history, type="primary", use_container_width=True)
     if not st.session_state["room_id"]:
@@ -200,7 +209,7 @@ def main():
     st.title("Virtual Assistant")
     room_sidebar()
     render_chat_history()
-    st.chat_input("Answer question, Generate music/image/video, Analyze document, ...", key="chat_text", on_submit=chat_flow)
+    st.chat_input("Answer question, Generate music/image/video, Analyze PDF/URL document, ...", key="chat_text", on_submit=chat_flow)
 
 if __name__ == "__main__":
     main()

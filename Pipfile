@@ -14,10 +14,11 @@ langchain = "*"
 langchain-openai = "*"
 langchain-community = "*"
 huggingface-hub = "*"
+gradio-tools = "*"
 duckduckgo-search = "*"
 pypdf = "*"
+beautifulsoup4 = "*"
 faiss-cpu = "*"
-gradio-tools = "*"
 
 [dev-packages]
 
