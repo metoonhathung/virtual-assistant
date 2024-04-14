@@ -13,6 +13,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.chat_message_histories import ChatMessageHistory, SQLChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain.agents import AgentExecutor, create_openai_functions_agent, create_json_chat_agent
+from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
+from langchain import hub
 from tools import search, get_retriever_tool, generate_music, generate_image, generate_video
 from constants import *
 
@@ -52,6 +54,7 @@ def get_key(key, default_value):
 def get_gpt_llm():
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
     tools = get_key("tools", [search, generate_music, generate_image, generate_video])
+    # prompt = hub.pull("hwchase17/openai-functions-agent")
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a helpful assistant"),
         MessagesPlaceholder(variable_name="chat_history"),
@@ -65,6 +68,7 @@ def get_mistral_llm():
     # llm = Ollama(model="mistral:7b", temperature=0)
     llm = HuggingFaceEndpoint(repo_id="mistralai/Mistral-7B-Instruct-v0.2", temperature=0.01)
     tools = get_key("tools", [search, generate_music, generate_image, generate_video])
+    # prompt = hub.pull("hwchase17/react-chat-json")
     prompt = react_chat_json_prompt
     agent = create_json_chat_agent(llm, tools, prompt)
     return agent
@@ -84,8 +88,10 @@ def get_agent():
     return agent_with_chat_history
 
 def natural_language_processing(text):
+    with st.sidebar:
+        st_callback = StreamlitCallbackHandler(st.container())
     agent = get_key("agent", get_agent())
-    response = agent.invoke({"input": text}, config={"configurable": {"session_id": "chat_history"}})["output"]
+    response = agent.invoke({"input": text}, config={"configurable": {"session_id": "chat_history"}, "callbacks": [st_callback]})["output"]
     return response
 
 def update_llm_model():
@@ -96,8 +102,9 @@ def update_llm_model():
 def update_retriever_tool(type):
     tools = [search, generate_music, generate_image, generate_video]
     model = get_key("model", "mistral")
-    if type == "pdf":
-        uploaded_files = st.session_state["uploaded_files"]
+    uploaded_files = st.session_state["uploaded_files"]
+    urls = st.session_state["urls"].strip().split("\n")
+    if type == "pdf" and len(uploaded_files):
         file_paths = []
         file_names = []
         for uploaded_file in uploaded_files:
@@ -108,8 +115,7 @@ def update_retriever_tool(type):
         st.session_state["pdf_tool"] = get_retriever_tool(file_paths, file_names, "pdf", model)
     if "pdf_tool" in st.session_state:
         tools += [st.session_state["pdf_tool"]]
-    if type == "url":
-        urls = st.session_state["urls"].strip().split("\n")
+    if type == "url" and len(urls):
         st.session_state["url_tool"] = get_retriever_tool(urls, urls, "url", model)
     if "url_tool" in st.session_state:
         tools += [st.session_state["url_tool"]]
@@ -129,13 +135,20 @@ def delete_chat_history():
     st.session_state["room_id"] = ""
 
 def chat_flow():
-    chat_text = st.session_state["chat_text"]
-    # st.session_state["chat_text"] = ""
+    chat_text = st.chat_input("Answer question, Generate music/image/video, Analyze PDF/URL document, ...")
     if chat_text:
         llm_text = natural_language_processing(chat_text)
+        # chat_text = ""
 
 def voice_flow():
-    if (os.path.exists(TMP_WAV)):
+    webrtc_ctx = webrtc_streamer(
+        key="webrtc_ctx",
+        mode=WebRtcMode.SENDRECV,
+        in_recorder_factory=lambda: MediaRecorder(TMP_WAV),
+        media_stream_constraints={"audio": True, "video": False},
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+    )
+    if (not webrtc_ctx.state.playing) and os.path.exists(TMP_WAV):
         speech_text = automatic_speech_recognition()
         os.remove(TMP_WAV)
         if speech_text:
@@ -165,17 +178,6 @@ def render_chat_history():
             else:
                 st.chat_message(message.type).write(message.content)
 
-def record_audio():
-    webrtc_streamer(
-        key="webrtc_ctx",
-        mode=WebRtcMode.SENDRECV,
-        in_recorder_factory=lambda: MediaRecorder(TMP_WAV),
-        media_stream_constraints={"audio": True, "video": False},
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-    )
-    if not st.session_state["webrtc_ctx"].state.playing:
-        voice_flow()
-
 def render_rooms(): # Table "message_store" has 3 columns: ["id", "session_id", "message"].
     # conn = st.connection("sqlite_db", type="sql", url=SQLITE_URL)
     # room_ids = conn.query("SELECT session_id, COUNT(*) AS row_count FROM message_store GROUP BY session_id")
@@ -196,20 +198,20 @@ def room_sidebar():
         if st.session_state["room_id"]:
             with st.expander("Settings"):
                 st.selectbox("Model", ["mistral", "gpt"], key="model", on_change=update_llm_model)
-                st.text_area("URLs retriever", key="urls", on_change=update_retriever_tool, kwargs={"type": "url"})
+                st.text_area("URLs Retriever", key="urls", on_change=update_retriever_tool, kwargs={"type": "url"})
                 st.file_uploader("PDFs Retriever", key="uploaded_files", on_change=update_retriever_tool, kwargs={"type": "pdf"}, type=["pdf"], accept_multiple_files=True)
-                record_audio()
                 st.button("Delete chat", on_click=delete_chat_history, type="primary", use_container_width=True)
+            voice_flow()
     if not st.session_state["room_id"]:
         st.info("Enter existing or new room ID to continue")
         st.stop()
     
 def main():
-    st.set_page_config(page_title="Virtual Assistant", page_icon="🤖")
+    st.set_page_config(page_title="Virtual Assistant", page_icon="random")
     st.title("Virtual Assistant")
     room_sidebar()
+    chat_flow()
     render_chat_history()
-    st.chat_input("Answer question, Generate music/image/video, Analyze PDF/URL document, ...", key="chat_text", on_submit=chat_flow)
 
 if __name__ == "__main__":
     main()

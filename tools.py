@@ -12,11 +12,23 @@ from dotenv import load_dotenv, find_dotenv
 import requests
 import tempfile
 import os
+import hashlib
+from gptcache import Cache
+from gptcache.adapter.api import init_similar_cache
+from langchain.cache import InMemoryCache, GPTCache
+from langchain.globals import set_llm_cache
+from langchain.storage import InMemoryByteStore
+from langchain.embeddings import CacheBackedEmbeddings
 
 _ = load_dotenv(find_dotenv())
+# set_llm_cache(InMemoryCache())
+def init_gptcache(cache_obj: Cache, llm: str):
+    hashed_llm = hashlib.sha256(llm.encode()).hexdigest()
+    init_similar_cache(cache_obj=cache_obj, data_dir=f"similar_cache_{hashed_llm}")
+set_llm_cache(GPTCache(init_gptcache))
+store = InMemoryByteStore()
 
 search = DuckDuckGoSearchRun()
-text2video = TextToVideoTool() # ali-vilab/modelscope-damo-text-to-video-synthesis
 
 def get_retriever_tool(file_paths, file_names, type, model):
     pages = []
@@ -29,9 +41,10 @@ def get_retriever_tool(file_paths, file_names, type, model):
             loader = WebBaseLoader(file_path)
             docs = loader.load()
             pages.extend(RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200).split_documents(docs))
-    # embeddings = OllamaEmbeddings(model="mistral:7b") if model == "mistral" else OpenAIEmbeddings(model="gpt-3.5-turbo")
-    embeddings = HuggingFaceInferenceAPIEmbeddings(api_key=os.environ["HUGGINGFACEHUB_API_TOKEN"], model_name="sentence-transformers/all-MiniLM-l6-v2") if model == "mistral" else OpenAIEmbeddings(model="gpt-3.5-turbo")
-    vector = FAISS.from_documents(pages, embeddings)
+    # underlying_embeddings = OllamaEmbeddings(model="mistral:7b")
+    underlying_embeddings = HuggingFaceInferenceAPIEmbeddings(api_key=os.environ["HUGGINGFACEHUB_API_TOKEN"], model_name="sentence-transformers/all-MiniLM-l6-v2") if model == "mistral" else OpenAIEmbeddings(model="gpt-3.5-turbo")
+    cached_embedder = CacheBackedEmbeddings.from_bytes_store(underlying_embeddings, store, namespace="mistral-embed" if model == "mistral" else underlying_embeddings.model)
+    vector = FAISS.from_documents(pages, cached_embedder)
     retriever = vector.as_retriever()
     retriever_tool = create_retriever_tool(
         retriever,
@@ -74,4 +87,5 @@ class VideoGenerationInput(BaseModel):
 @tool("video-generation-tool", args_schema=VideoGenerationInput, return_direct=True)
 def generate_video(desc: str) -> str:
     """Generate video online and return a string containing .mp4 file path"""
+    text2video = TextToVideoTool() # ali-vilab/modelscope-damo-text-to-video-synthesis
     return text2video.langchain.run(desc)

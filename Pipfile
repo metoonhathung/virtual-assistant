@@ -13,12 +13,14 @@ python-dotenv = "*"
 langchain = "*"
 langchain-openai = "*"
 langchain-community = "*"
+langchainhub = "*"
 huggingface-hub = "*"
 gradio-tools = "*"
 duckduckgo-search = "*"
 pypdf = "*"
 beautifulsoup4 = "*"
 faiss-cpu = "*"
+gptcache = "*"
 
 [dev-packages]
 
