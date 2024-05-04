@@ -15,7 +15,7 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain.agents import AgentExecutor, create_openai_functions_agent, create_json_chat_agent
 from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
 from langchain import hub
-from tools import search, get_retriever_tool, generate_music, generate_image, generate_video
+from tools import search, get_sql_tool, get_retriever_tool, generate_music, generate_image, generate_video
 from constants import *
 
 _ = load_dotenv(find_dotenv())
@@ -100,26 +100,33 @@ def update_llm_model():
     st.session_state["agent"] = get_agent()
 
 def update_retriever_tool(type):
-    tools = [search, generate_music, generate_image, generate_video]
     model = get_key("model", "mistral")
-    uploaded_files = st.session_state["uploaded_files"]
-    urls = st.session_state["urls"].strip().split("\n")
-    if type == "pdf" and len(uploaded_files):
-        file_paths = []
-        file_names = []
-        for uploaded_file in uploaded_files:
+    tool_dict = get_key("tool_dict", {})
+    updated_tool_dict = {}
+    csv_files = st.session_state["csv_files"]
+    pdf_files = st.session_state["pdf_files"]
+    urls = [url.strip() for url in st.session_state["urls"].split("\n") if url.strip()]
+    for csv_file in csv_files:
+        if csv_file.name not in tool_dict:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_file:
+                temp_file.write(csv_file.getvalue())
+            updated_tool_dict[csv_file.name] = get_sql_tool(temp_file.name, csv_file.name, model)
+        else:
+            updated_tool_dict[csv_file.name] = tool_dict[csv_file.name]
+    for pdf_file in pdf_files:
+        if pdf_file.name not in tool_dict:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                temp_file.write(uploaded_file.getvalue())
-                file_paths.append(temp_file.name)
-                file_names.append(uploaded_file.name)
-        st.session_state["pdf_tool"] = get_retriever_tool(file_paths, file_names, "pdf", model)
-    if "pdf_tool" in st.session_state:
-        tools += [st.session_state["pdf_tool"]]
-    if type == "url" and len(urls):
-        st.session_state["url_tool"] = get_retriever_tool(urls, urls, "url", model)
-    if "url_tool" in st.session_state:
-        tools += [st.session_state["url_tool"]]
-    st.session_state["tools"] = tools
+                temp_file.write(pdf_file.getvalue())
+            updated_tool_dict[pdf_file.name] = get_retriever_tool(temp_file.name, pdf_file.name, "pdf", model)
+        else:
+            updated_tool_dict[pdf_file.name] = tool_dict[pdf_file.name]
+    for url in urls:
+        if url not in tool_dict:
+            updated_tool_dict[url] = get_retriever_tool(url, url, "url", model)
+        else:
+            updated_tool_dict[url] = tool_dict[url]
+    st.session_state["tool_dict"] = updated_tool_dict
+    st.session_state["tools"] = [search, generate_music, generate_image, generate_video] + [value for value in updated_tool_dict.values()]
     st.session_state["llm"] = get_mistral_llm() if model == "mistral" else get_gpt_llm()
     st.session_state["agent"] = get_agent()
 
@@ -135,7 +142,7 @@ def delete_chat_history():
     st.session_state["room_id"] = ""
 
 def chat_flow():
-    chat_text = st.chat_input("Answer question, Generate music/image/video, Analyze PDF/URL document, ...")
+    chat_text = st.chat_input("Answer question, Generate music/image/video, Analyze CSV/PDF/URL document, ...")
     if chat_text:
         llm_text = natural_language_processing(chat_text)
         # chat_text = ""
@@ -199,7 +206,8 @@ def room_sidebar():
             with st.expander("Settings"):
                 st.selectbox("Model", ["mistral", "gpt"], key="model", on_change=update_llm_model)
                 st.text_area("URLs Retriever", key="urls", on_change=update_retriever_tool, kwargs={"type": "url"})
-                st.file_uploader("PDFs Retriever", key="uploaded_files", on_change=update_retriever_tool, kwargs={"type": "pdf"}, type=["pdf"], accept_multiple_files=True)
+                st.file_uploader("CSVs Retriever", key="csv_files", on_change=update_retriever_tool, kwargs={"type": "csv"}, type=["csv"], accept_multiple_files=True)
+                st.file_uploader("PDFs Retriever", key="pdf_files", on_change=update_retriever_tool, kwargs={"type": "pdf"}, type=["pdf"], accept_multiple_files=True)
                 st.button("Delete chat", on_click=delete_chat_history, type="primary", use_container_width=True)
             voice_flow()
     if not st.session_state["room_id"]:
