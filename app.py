@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import shutil
 from agent import run_agent, SQLITE_URL
+from graph import memory, get_graph, run_graph
 from tools import get_retriever_tool, get_sql_tool
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 
@@ -35,10 +36,28 @@ async def get_chats():
     conn.close()
     return rooms
 
+@app.get("/v2/chat")
+async def get_chats_v2():
+    room_ids = list(memory.storage.keys())
+    graphs = [get_graph(tools_dict, room_id) for room_id in room_ids]
+    snapshots = [graph.get_state({"configurable": {"thread_id": room_id}}) for room_id, graph in zip(room_ids, graphs)]
+    messages_list = [snapshot.values["messages"] if "messages" in snapshot.values else [] for snapshot in snapshots]
+    rooms = [{"Room ID": room_id, "Messages": len(messages)} for room_id, messages in zip(room_ids, messages_list)]
+    return rooms
+
 @app.get("/chat/{room_id}")
 async def get_chat(room_id: str):
     chat_history = SQLChatMessageHistory(session_id=room_id, connection_string=SQLITE_URL)
     messages = [{ "type": m.type, "content": m.content } for m in chat_history.messages]
+    return messages
+
+@app.get("/v2/chat/{room_id}")
+async def get_chat_v2(room_id: str):
+    graph = get_graph(tools_dict, room_id)
+    config = {"configurable": {"thread_id": room_id}}
+    snapshot = graph.get_state(config)
+    if "messages" not in snapshot.values: return []
+    messages = [{ "type": "ai" if m.name else "human", "content": m.content } for m in snapshot.values["messages"]]
     return messages
 
 @app.delete("/chat/{room_id}")
@@ -48,9 +67,20 @@ async def delete_chat(room_id: str):
     tools_dict.pop(room_id, None)
     return { "message": f"Chat history for room {room_id} has been deleted" }
 
+@app.delete("/v2/chat/{room_id}")
+async def delete_chat_v2(room_id: str):
+    global memory
+    memory.storage.pop(room_id, None)
+    return { "message": f"Chat history for room {room_id} has been deleted" }
+
 @app.post("/chat/{room_id}")
 async def post_chat(room_id: str, payload: ChatRequest):
     response = run_agent(tools_dict, room_id, payload.text)
+    return { "response": response }
+
+@app.post("/v2/chat/{room_id}")
+async def post_chat_v2(room_id: str, payload: ChatRequest):
+    response = run_graph(tools_dict, room_id, payload.text)
     return { "response": response }
 
 @app.get("/tool/{room_id}")
